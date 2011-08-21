@@ -1,0 +1,64 @@
+From 6dbdcb6984671547ff230163b3dca634eacca790 Mon Sep 17 00:00:00 2001
+From: Jason Gunthorpe <jgunthorpe@obsidianresearch.com>
+Date: Mon, 20 Jul 2009 16:36:02 -0600
+Subject: [PATCH 7/9] Remove empty stubs for detach/attach_mcast
+
+Just use ibv_cmd_* directly.  Simplifies the code and fixes const
+correctness warnings due to changes in libibverbs.
+
+Signed-off-by: Jason Gunthorpe <jgunthorpe@obsidianresearch.com>
+Signed-off-by: Roland Dreier <rolandd@cisco.com>
+---
+ src/mthca.c |    4 ++--
+ src/mthca.h |    2 --
+ src/verbs.c |   10 ----------
+ 3 files changed, 2 insertions(+), 14 deletions(-)
+
+diff --git a/src/mthca.c b/src/mthca.c
+index e00c4ee..e33bf7f 100644
+--- a/src/mthca.c
++++ b/src/mthca.c
+@@ -127,8 +127,8 @@ static struct ibv_context_ops mthca_ctx_ops = {
+ 	.destroy_qp    = mthca_destroy_qp,
+ 	.create_ah     = mthca_create_ah,
+ 	.destroy_ah    = mthca_destroy_ah,
+-	.attach_mcast  = mthca_attach_mcast,
+-	.detach_mcast  = mthca_detach_mcast
++	.attach_mcast  = ibv_cmd_attach_mcast,
++	.detach_mcast  = ibv_cmd_detach_mcast
+ };
+ 
+ static struct ibv_context *mthca_alloc_context(struct ibv_device *ibdev, int cmd_fd)
+diff --git a/src/mthca.h b/src/mthca.h
+index 66751f3..9a2e362 100644
+--- a/src/mthca.h
++++ b/src/mthca.h
+@@ -372,7 +372,5 @@ int mthca_destroy_ah(struct ibv_ah *ah);
+ int mthca_alloc_av(struct mthca_pd *pd, struct ibv_ah_attr *attr,
+ 		   struct mthca_ah *ah);
+ void mthca_free_av(struct mthca_ah *ah);
+-int mthca_attach_mcast(struct ibv_qp *qp, union ibv_gid *gid, uint16_t lid);
+-int mthca_detach_mcast(struct ibv_qp *qp, union ibv_gid *gid, uint16_t lid);
+ 
+ #endif /* MTHCA_H */
+diff --git a/src/verbs.c b/src/verbs.c
+index b2ef3ec..f6570c6 100644
+--- a/src/verbs.c
++++ b/src/verbs.c
+@@ -746,13 +746,3 @@ int mthca_destroy_ah(struct ibv_ah *ah)
+ 
+ 	return 0;
+ }
+-
+-int mthca_attach_mcast(struct ibv_qp *qp, union ibv_gid *gid, uint16_t lid)
+-{
+-	return ibv_cmd_attach_mcast(qp, gid, lid);
+-}
+-
+-int mthca_detach_mcast(struct ibv_qp *qp, union ibv_gid *gid, uint16_t lid)
+-{
+-	return ibv_cmd_detach_mcast(qp, gid, lid);
+-}
+-- 
+1.6.5.2
+

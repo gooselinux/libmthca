@@ -1,0 +1,101 @@
+From 0d1253d0f64a325dac9d3a078a04e573c007f5b6 Mon Sep 17 00:00:00 2001
+From: Jason Gunthorpe <jgunthorpe@obsidianresearch.com>
+Date: Thu, 23 Jul 2009 10:04:29 -0600
+Subject: [PATCH 9/9] Update function prototypes to match libibverbs enum type change
+
+Change enum bit flags to int to match libibverbs prototype changes.
+
+Signed-off-by: Jason Gunthorpe <jgunthorpe@obsidianresearch.com>
+Signed-off-by: Roland Dreier <rolandd@cisco.com>
+---
+ src/mthca.h |    8 ++++----
+ src/verbs.c |   10 +++++-----
+ 2 files changed, 9 insertions(+), 9 deletions(-)
+
+diff --git a/src/mthca.h b/src/mthca.h
+index 9a2e362..bd1e7a2 100644
+--- a/src/mthca.h
++++ b/src/mthca.h
+@@ -309,7 +309,7 @@ struct ibv_pd *mthca_alloc_pd(struct ibv_context *context);
+ int mthca_free_pd(struct ibv_pd *pd);
+ 
+ struct ibv_mr *mthca_reg_mr(struct ibv_pd *pd, void *addr,
+-			    size_t length, enum ibv_access_flags access);
++			    size_t length, int access);
+ int mthca_dereg_mr(struct ibv_mr *mr);
+ 
+ struct ibv_cq *mthca_create_cq(struct ibv_context *context, int cqe,
+@@ -330,7 +330,7 @@ struct ibv_srq *mthca_create_srq(struct ibv_pd *pd,
+ 				 struct ibv_srq_init_attr *attr);
+ int mthca_modify_srq(struct ibv_srq *srq,
+ 		     struct ibv_srq_attr *attr,
+-		     enum ibv_srq_attr_mask mask);
++		     int mask);
+ int mthca_query_srq(struct ibv_srq *srq,
+ 			   struct ibv_srq_attr *attr);
+ int mthca_destroy_srq(struct ibv_srq *srq);
+@@ -346,10 +346,10 @@ int mthca_arbel_post_srq_recv(struct ibv_srq *ibsrq,
+ 
+ struct ibv_qp *mthca_create_qp(struct ibv_pd *pd, struct ibv_qp_init_attr *attr);
+ int mthca_query_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr,
+-		   enum ibv_qp_attr_mask attr_mask,
++		   int attr_mask,
+ 		   struct ibv_qp_init_attr *init_attr);
+ int mthca_modify_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr,
+-		    enum ibv_qp_attr_mask attr_mask);
++		    int attr_mask);
+ int mthca_destroy_qp(struct ibv_qp *qp);
+ void mthca_init_qp_indices(struct mthca_qp *qp);
+ int mthca_tavor_post_send(struct ibv_qp *ibqp, struct ibv_send_wr *wr,
+diff --git a/src/verbs.c b/src/verbs.c
+index f6570c6..b6782c9 100644
+--- a/src/verbs.c
++++ b/src/verbs.c
+@@ -117,7 +117,7 @@ int mthca_free_pd(struct ibv_pd *pd)
+ 
+ static struct ibv_mr *__mthca_reg_mr(struct ibv_pd *pd, void *addr,
+ 				     size_t length, uint64_t hca_va,
+-				     enum ibv_access_flags access,
++				     int access,
+ 				     int dma_sync)
+ {
+ 	struct ibv_mr *mr;
+@@ -157,7 +157,7 @@ static struct ibv_mr *__mthca_reg_mr(struct ibv_pd *pd, void *addr,
+ }
+ 
+ struct ibv_mr *mthca_reg_mr(struct ibv_pd *pd, void *addr,
+-			    size_t length, enum ibv_access_flags access)
++			    size_t length, int access)
+ {
+ 	return __mthca_reg_mr(pd, addr, length, (uintptr_t) addr, access, 0);
+ }
+@@ -468,7 +468,7 @@ err:
+ 
+ int mthca_modify_srq(struct ibv_srq *srq,
+ 		     struct ibv_srq_attr *attr,
+-		     enum ibv_srq_attr_mask attr_mask)
++		     int attr_mask)
+ {
+ 	struct ibv_modify_srq cmd;
+ 
+@@ -618,7 +618,7 @@ err:
+ }
+ 
+ int mthca_query_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr,
+-		   enum ibv_qp_attr_mask attr_mask,
++		   int attr_mask,
+ 		   struct ibv_qp_init_attr *init_attr)
+ {
+ 	struct ibv_query_qp cmd;
+@@ -627,7 +627,7 @@ int mthca_query_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr,
+ }
+ 
+ int mthca_modify_qp(struct ibv_qp *qp, struct ibv_qp_attr *attr,
+-		    enum ibv_qp_attr_mask attr_mask)
++		    int attr_mask)
+ {
+ 	struct ibv_modify_qp cmd;
+ 	int ret;
+-- 
+1.6.5.2
+

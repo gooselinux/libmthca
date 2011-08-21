@@ -1,0 +1,78 @@
+From 14fb976c9999e1c6dc2a5c7a5e0f790d35631658 Mon Sep 17 00:00:00 2001
+From: Sebastien Dugue <sebastien.dugue@bull.net>
+Date: Wed, 29 Jul 2009 11:56:53 -0700
+Subject: [PATCH 8/9] Use mmap(MAP_ANONYMOUS) to allocate queue buffers
+
+Internal buffers for QPs, CQs, SRQs etc. are allocated with
+mthca_alloc_buf(), which rounds the buffer's size to the page size and
+then allocates page aligned memory using posix_memalign().
+
+However, this allocation is quite wasteful on architectures using 64K
+pages (ia64 for example) because we then hit glibc's MMAP_THRESHOLD
+malloc parameter and chunks are allocated using mmap.  Thus we end up
+allocating:
+
+  (requested size rounded to the page size) + (page size) + (malloc overhead)
+
+rounded internally to the page size.
+
+So for example, if we request a buffer of page_size bytes, we end up
+consuming 3 pages.  In short, for each buffer we allocate, there is an
+overhead of 2 pages.  This is quite visible on large clusters where
+the number of QPs can reach several thousands.
+
+This patch replaces the call to posix_memalign() in mthca_alloc_buf()
+with a direct call to mmap().
+
+Signed-off-by: Sebastien Dugue <sebastien.dugue@bull.net>
+Signed-off-by: Roland Dreier <rolandd@cisco.com>
+---
+ src/buf.c |   17 +++++++++--------
+ 1 files changed, 9 insertions(+), 8 deletions(-)
+
+diff --git a/src/buf.c b/src/buf.c
+index 6c1be4f..074a5f8 100644
+--- a/src/buf.c
++++ b/src/buf.c
+@@ -35,6 +35,8 @@
+ #endif /* HAVE_CONFIG_H */
+ 
+ #include <stdlib.h>
++#include <sys/mman.h>
++#include <errno.h>
+ 
+ #include "mthca.h"
+ 
+@@ -61,16 +63,15 @@ int mthca_alloc_buf(struct mthca_buf *buf, size_t size, int page_size)
+ {
+ 	int ret;
+ 
+-	ret = posix_memalign(&buf->buf, page_size, align(size, page_size));
+-	if (ret)
+-		return ret;
++	buf->length = align(size, page_size);
++	buf->buf = mmap(NULL, buf->length, PROT_READ | PROT_WRITE,
++			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
++	if (buf->buf == MAP_FAILED)
++		return errno;
+ 
+ 	ret = ibv_dontfork_range(buf->buf, size);
+ 	if (ret)
+-		free(buf->buf);
+-
+-	if (!ret)
+-		buf->length = size;
++		munmap(buf->buf, buf->length);
+ 
+ 	return ret;
+ }
+@@ -78,5 +79,5 @@ int mthca_alloc_buf(struct mthca_buf *buf, size_t size, int page_size)
+ void mthca_free_buf(struct mthca_buf *buf)
+ {
+ 	ibv_dofork_range(buf->buf, buf->length);
+-	free(buf->buf);
++	munmap(buf->buf, buf->length);
+ }
+-- 
+1.6.5.2
+

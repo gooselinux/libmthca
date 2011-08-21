@@ -1,0 +1,125 @@
+From be5eef3895eb7864db6395b885a19f770fde7234 Mon Sep 17 00:00:00 2001
+From: Jack Morgenstein <jackm@dev.mellanox.co.il>
+Date: Sat, 22 Nov 2008 11:54:01 +0200
+Subject: [PATCH 3/9] Fix race between create QP and destroy QP
+
+There is a race in libmthca because mthca_create_qp() and
+mthca_destroy_qp() are not atomic WRT each other.  If one thread is
+destroying a QP while another is creating a QP, the following can
+happen: the destroying thread can be scheduled out after it has
+deleted the QP from kernel space, but before it has cleared it from
+userspace store (mthca_clear_qp()).  If the other thread creates a QP
+during this break, it gets the same QP base number and overwrites the
+destroyed QP's entry with mthca_store_qp().  When the destroying thread
+resumes, it clears the new entry from the userspace store via
+mthca_clear_qp.
+
+Fix this by expanding where qp_table_mutex is held to serialize the
+full create and destroy operations against each other.
+
+Signed-off-by: Roland Dreier <rolandd@cisco.com>
+---
+ src/qp.c    |   18 +++---------------
+ src/verbs.c |    9 ++++++++-
+ 2 files changed, 11 insertions(+), 16 deletions(-)
+
+diff --git a/src/qp.c b/src/qp.c
+index 55608be..84dd206 100644
+--- a/src/qp.c
++++ b/src/qp.c
+@@ -909,39 +909,27 @@ struct mthca_qp *mthca_find_qp(struct mthca_context *ctx, uint32_t qpn)
+ int mthca_store_qp(struct mthca_context *ctx, uint32_t qpn, struct mthca_qp *qp)
+ {
+ 	int tind = (qpn & (ctx->num_qps - 1)) >> ctx->qp_table_shift;
+-	int ret = 0;
+-
+-	pthread_mutex_lock(&ctx->qp_table_mutex);
+ 
+ 	if (!ctx->qp_table[tind].refcnt) {
+ 		ctx->qp_table[tind].table = calloc(ctx->qp_table_mask + 1,
+ 						   sizeof (struct mthca_qp *));
+-		if (!ctx->qp_table[tind].table) {
+-			ret = -1;
+-			goto out;
+-		}
++		if (!ctx->qp_table[tind].table)
++			return -1;
+ 	}
+ 
+ 	++ctx->qp_table[tind].refcnt;
+ 	ctx->qp_table[tind].table[qpn & ctx->qp_table_mask] = qp;
+-
+-out:
+-	pthread_mutex_unlock(&ctx->qp_table_mutex);
+-	return ret;
++	return 0;
+ }
+ 
+ void mthca_clear_qp(struct mthca_context *ctx, uint32_t qpn)
+ {
+ 	int tind = (qpn & (ctx->num_qps - 1)) >> ctx->qp_table_shift;
+ 
+-	pthread_mutex_lock(&ctx->qp_table_mutex);
+-
+ 	if (!--ctx->qp_table[tind].refcnt)
+ 		free(ctx->qp_table[tind].table);
+ 	else
+ 		ctx->qp_table[tind].table[qpn & ctx->qp_table_mask] = NULL;
+-
+-	pthread_mutex_unlock(&ctx->qp_table_mutex);
+ }
+ 
+ int mthca_free_err_wqe(struct mthca_qp *qp, int is_send,
+diff --git a/src/verbs.c b/src/verbs.c
+index def0f30..b2ef3ec 100644
+--- a/src/verbs.c
++++ b/src/verbs.c
+@@ -566,6 +566,7 @@ struct ibv_qp *mthca_create_qp(struct ibv_pd *pd, struct ibv_qp_init_attr *attr)
+ 		cmd.sq_db_index = cmd.rq_db_index = 0;
+ 	}
+ 
++	pthread_mutex_lock(&to_mctx(pd->context)->qp_table_mutex);
+ 	ret = ibv_cmd_create_qp(pd, &qp->ibv_qp, attr, &cmd.ibv_cmd, sizeof cmd,
+ 				&resp, sizeof resp);
+ 	if (ret)
+@@ -579,6 +580,7 @@ struct ibv_qp *mthca_create_qp(struct ibv_pd *pd, struct ibv_qp_init_attr *attr)
+ 	ret = mthca_store_qp(to_mctx(pd->context), qp->ibv_qp.qp_num, qp);
+ 	if (ret)
+ 		goto err_destroy;
++	pthread_mutex_unlock(&to_mctx(pd->context)->qp_table_mutex);
+ 
+ 	qp->sq.max 	    = attr->cap.max_send_wr;
+ 	qp->rq.max 	    = attr->cap.max_recv_wr;
+@@ -592,6 +594,7 @@ err_destroy:
+ 	ibv_cmd_destroy_qp(&qp->ibv_qp);
+ 
+ err_rq_db:
++	pthread_mutex_unlock(&to_mctx(pd->context)->qp_table_mutex);
+ 	if (mthca_is_memfree(pd->context))
+ 		mthca_free_db(to_mctx(pd->context)->db_tab, MTHCA_DB_TYPE_RQ,
+ 			      qp->rq.db_index);
+@@ -686,9 +689,12 @@ int mthca_destroy_qp(struct ibv_qp *qp)
+ {
+ 	int ret;
+ 
++	pthread_mutex_lock(&to_mctx(qp->context)->qp_table_mutex);
+ 	ret = ibv_cmd_destroy_qp(qp);
+-	if (ret)
++	if (ret) {
++		pthread_mutex_unlock(&to_mctx(qp->context)->qp_table_mutex);
+ 		return ret;
++	}
+ 
+ 	mthca_lock_cqs(qp);
+ 
+@@ -700,6 +706,7 @@ int mthca_destroy_qp(struct ibv_qp *qp)
+ 	mthca_clear_qp(to_mctx(qp->context), qp->qp_num);
+ 
+ 	mthca_unlock_cqs(qp);
++	pthread_mutex_unlock(&to_mctx(qp->context)->qp_table_mutex);
+ 
+ 	if (mthca_is_memfree(qp->context)) {
+ 		mthca_free_db(to_mctx(qp->context)->db_tab, MTHCA_DB_TYPE_RQ,
+-- 
+1.6.5.2
+
